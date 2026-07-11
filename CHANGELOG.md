@@ -5,6 +5,22 @@ All notable changes to rtk (Rust Token Killer) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.43.2] (2026-07-11)
+
+### Features
+
+* **php:** add PHP command support for `php`, `phpunit`, `phpstan`, `pest`, `paratest`, `ecs`, and `pint`, including PHP pipe filters.
+* **php:** resolve project-local Composer tools from `COMPOSER_BIN_DIR`, `composer.json` `config.bin-dir`, and the default `vendor/bin` fallback.
+* **hooks:** add Factory Droid hook installation, uninstall, command rewriting, and deny-only settings integration.
+* **opencode:** add first-class `rtk init -g --agent opencode` and `rtk uninstall -g --agent opencode` support while preserving the existing plugin model.
+
+### Bug Fixes
+
+* **windows:** add automatic temporary UTF-8-BOM `.ps1 -File` fallback for oversized generated PowerShell commands.
+* **windows:** improve native `head`, `tail`, `touch`, `mkdir`, `which`, `df`, `du`, `ps`, and PowerShell cmdlet compatibility.
+* **native:** make command failures visible with actionable diagnostics and propagate native `find` exit statuses.
+* **hooks:** harden Droid configuration writes against malformed JSON, link/reparse-point escapes, and partial uninstall writes.
+
 ## [0.42.4](https://github.com/rtk-ai/rtk/compare/v0.42.3...v0.42.4) (2026-06-12)
 
 

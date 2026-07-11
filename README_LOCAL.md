@@ -18,7 +18,7 @@ stable directory, and add that directory to `PATH`:
 ```powershell
 $InstallDir = "$env:LOCALAPPDATA\Programs\rtk"
 New-Item -ItemType Directory -Force -Path $InstallDir
-Invoke-WebRequest -Uri "https://github.com/fuxkCH/rtk/releases/download/v0.43.1/rtk.exe" -OutFile "$InstallDir\rtk.exe"
+Invoke-WebRequest -Uri "https://github.com/fuxkCH/rtk/releases/download/v0.43.2/rtk.exe" -OutFile "$InstallDir\rtk.exe"
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($UserPath -split ';') -notcontains $InstallDir) {
     [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
@@ -41,7 +41,7 @@ Expected version for this release:
 当前 release 的预期版本：
 
 ```text
-rtk 0.43.1
+rtk 0.43.2
 ```
 
 Initialize Codex integration after verifying the binary:

@@ -1,7 +1,7 @@
-use crate::core::utils::{resolve_binary, resolved_command};
+use crate::core::utils::{composer_tool_paths, resolve_binary, resolved_command};
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 lazy_static! {
@@ -10,25 +10,21 @@ lazy_static! {
 }
 
 pub fn php_tool_command(tool: &str) -> Command {
-    let local_tool = composer_tool_path(tool);
-    let local_tool_name = local_tool.to_string_lossy().into_owned();
-    // This branch predates the shared Composer-bin resolver. Keep the standard
-    // project-local vendor/bin path before falling back to a global PATH tool.
-    if resolve_binary(&local_tool_name).is_ok() || local_tool.exists() {
-        return resolved_command(&local_tool_name);
+    for local_tool in composer_tool_paths(tool) {
+        let local_tool_name = local_tool.to_string_lossy().into_owned();
+        if resolve_binary(&local_tool_name).is_ok() || local_tool.exists() {
+            return resolved_command(&local_tool_name);
+        }
     }
 
     resolved_command(tool)
 }
 
 fn composer_tool_exists(tool: &str) -> bool {
-    let local_tool = composer_tool_path(tool);
-    let local_tool_name = local_tool.to_string_lossy().into_owned();
-    resolve_binary(&local_tool_name).is_ok() || local_tool.exists()
-}
-
-fn composer_tool_path(tool: &str) -> PathBuf {
-    Path::new("vendor").join("bin").join(tool)
+    composer_tool_paths(tool).into_iter().any(|local_tool| {
+        let local_tool_name = local_tool.to_string_lossy().into_owned();
+        resolve_binary(&local_tool_name).is_ok() || local_tool.exists()
+    })
 }
 
 pub fn strip_ansi_and_controls(input: &str) -> String {

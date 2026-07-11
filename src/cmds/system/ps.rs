@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 #[cfg(not(target_os = "windows"))]
+use anyhow::Context;
+#[cfg(not(target_os = "windows"))]
 use crate::core::utils::{exit_code_from_status, resolved_command};
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
@@ -21,7 +23,7 @@ fn run_external(args: &[String], verbose: u8) -> Result<i32> {
     if verbose > 0 {
         eprintln!("Running: ps {}", args.join(" "));
     }
-    let status = resolved_command("ps").args(args).status()?;
+    let status = resolved_command("ps").args(args).status().context("Failed to run ps")?;
     Ok(exit_code_from_status(&status, "ps"))
 }
 
@@ -49,7 +51,7 @@ fn run_native(args: &[String], verbose: u8) -> Result<i32> {
 
 #[cfg(target_os = "windows")]
 fn native_ps_output() -> String {
-    let mut system = sysinfo::System::new_all();
+    let mut system = sysinfo::System::new();
     system.refresh_processes();
 
     let rows: Vec<(u32, String)> = system
@@ -94,5 +96,21 @@ mod tests {
         ]);
 
         assert_eq!(output, "PID NAME\n7 alpha.exe\n42 beta.exe\n");
+    }
+
+    #[test]
+    fn native_process_listing_uses_the_lightweight_system_constructor() {
+        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/cmds/system/ps.rs"));
+        let forbidden_constructor = ["System::new", "_all"].concat();
+
+        assert!(source.contains("System::new();"));
+        assert!(!source.contains(&forbidden_constructor));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn external_ps_spawn_has_actionable_context() {
+        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/cmds/system/ps.rs"));
+        assert!(source.contains(".status().context(\"Failed to run ps\")?"));
     }
 }

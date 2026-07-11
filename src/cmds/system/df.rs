@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 #[cfg(not(target_os = "windows"))]
+use anyhow::Context;
+#[cfg(not(target_os = "windows"))]
 use crate::core::utils::{exit_code_from_status, resolved_command};
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
@@ -21,7 +23,7 @@ fn run_external(args: &[String], verbose: u8) -> Result<i32> {
     if verbose > 0 {
         eprintln!("Running: df {}", args.join(" "));
     }
-    let status = resolved_command("df").args(args).status()?;
+    let status = resolved_command("df").args(args).status().context("Failed to run df")?;
     Ok(exit_code_from_status(&status, "df"))
 }
 
@@ -92,13 +94,13 @@ fn format_df_rows(mut rows: Vec<DfRow>, human: bool) -> String {
             .used
             .saturating_mul(100)
             .checked_div(row.total)
-            .map(|percent| percent.to_string())
-            .unwrap_or_else(|| "?".to_string());
+            .map(|percent| format!("{percent}%"))
+            .unwrap_or_else(|| "-".to_string());
         let size = format_size(row.total, human);
         let used = format_size(row.used, human);
         let available = format_size(row.available, human);
         output.push_str(&format!(
-            "{} {size} {used} {available} {use_percent}%\n",
+            "{} {size} {used} {available} {use_percent}\n",
             row.mount
         ));
     }
@@ -178,7 +180,14 @@ mod tests {
 
         assert_eq!(
             output,
-            "Filesystem Size Used Avail Use%\nC:\\ 1.0K 256B 768B 25%\nZ:\\ 0B 0B 0B ?%\n"
+            "Filesystem Size Used Avail Use%\nC:\\ 1.0K 256B 768B 25%\nZ:\\ 0B 0B 0B -\n"
         );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn external_df_spawn_has_actionable_context() {
+        let source = include_str!("df.rs");
+        assert!(source.contains(".status().context(\"Failed to run df\")?"));
     }
 }

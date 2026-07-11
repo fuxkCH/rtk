@@ -16,6 +16,7 @@ use cmds::js::{
     vitest_cmd,
 };
 use cmds::jvm::{gradlew_cmd, mvn_cmd};
+use cmds::php::{ecs_cmd, paratest_cmd, pest_cmd, php_cmd, phpstan_cmd, phpunit_cmd, pint_cmd};
 use cmds::python::{mypy_cmd, pip_cmd, pytest_cmd, ruff_cmd, uv_cmd};
 use cmds::ruby::{rake_cmd, rspec_cmd, rubocop_cmd};
 use cmds::rust::{cargo_cmd, runner};
@@ -51,6 +52,10 @@ pub enum AgentTarget {
     Pi,
     /// Hermes CLI
     Hermes,
+    /// Factory Droid CLI
+    Droid,
+    /// OpenCode (global TypeScript plugin)
+    Opencode,
 }
 
 #[derive(Parser)]
@@ -421,6 +426,21 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Remove RTK artifacts for an assistant integration
+    Uninstall {
+        /// Remove global assistant configuration instead of project files
+        #[arg(short, long)]
+        global: bool,
+
+        /// Target agent integration to remove
+        #[arg(long, value_enum)]
+        agent: Option<AgentTarget>,
+
+        /// Preview changes without deleting any files
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Download with compact output (strips progress bars)
     Wget {
         /// URL to download
@@ -708,9 +728,9 @@ enum Commands {
         args: Vec<OsString>,
     },
 
-    /// Read stdin, apply filter, print filtered output (Unix pipe mode)
+    /// Read stdin and apply a filter (phpunit, pest, paratest, php-test, ecs, phpstan, pint; Unix pipe mode)
     Pipe {
-        /// Filter name (cargo-test, pytest, grep, find, git-log, etc.)
+        /// Filter name (cargo-test, pytest, phpunit, pest, paratest, php-test, ecs, phpstan, pint, grep, find, git-log, etc.)
         #[arg(short, long)]
         filter: Option<String>,
 
@@ -759,6 +779,55 @@ enum Commands {
     /// Mypy type checker with grouped error output
     Mypy {
         /// Mypy arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// PHP command runner with compact output for artisan and syntax checks
+    Php {
+        /// PHP arguments (e.g., artisan about, -l app/Http/Controller.php)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// PHPUnit test runner with compact output
+    Phpunit {
+        /// PHPUnit arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// PHPStan analyzer with compact output
+    Phpstan {
+        /// PHPStan arguments (e.g., analyse src/)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Pest test runner with compact output
+    Pest {
+        /// Pest arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// ParaTest parallel test runner with compact output
+    Paratest {
+        /// ParaTest arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Easy Coding Standard code style checker with compact output
+    Ecs {
+        /// ECS arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Laravel Pint (PHP-CS-Fixer) code style fixer with compact output
+    Pint {
+        /// Pint arguments (e.g., --test, app/)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -877,6 +946,8 @@ enum HookCommands {
     Gemini,
     /// Process Copilot preToolUse hook (VS Code + Copilot CLI, reads JSON from stdin)
     Copilot,
+    /// Process Factory Droid PreToolUse hook (reads JSON from stdin)
+    Droid,
     /// Check how a command would be rewritten by the hook engine (dry-run)
     Check {
         /// Target agent
@@ -1401,7 +1472,7 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
             let code = core::windows_shell::run_other(&args_os, 0)?;
             timer.track_passthrough(&raw_command, &format!("rtk fallback: {}", raw_command));
             core::tracking::record_parse_failure_silent(&raw_command, &error_message, code != 127);
-            return Ok(code);
+            Ok(code)
         }
 
         #[cfg(not(windows))]
@@ -1564,25 +1635,114 @@ fn main() {
     std::process::exit(code);
 }
 
-fn uninstall_init_dispatch<UninstallHermes, UninstallStandard>(
+fn uninstall_opencode_dispatch<UninstallOpencode>(
+    global: bool,
+    ctx: hooks::init::InitContext,
+    uninstall_opencode: UninstallOpencode,
+) -> Result<()>
+where
+    UninstallOpencode: FnOnce(hooks::init::InitContext) -> Result<()>,
+{
+    if !global {
+        anyhow::bail!("OpenCode plugin is global-only. Use: rtk init -g --agent opencode");
+    }
+    uninstall_opencode(ctx)
+}
+
+fn uninstall_top_level_dispatch<UninstallOpencode>(
+    agent: Option<AgentTarget>,
+    global: bool,
+    ctx: hooks::init::InitContext,
+    uninstall_opencode: UninstallOpencode,
+) -> Result<()>
+where
+    UninstallOpencode: FnOnce(hooks::init::InitContext) -> Result<()>,
+{
+    match agent {
+        Some(AgentTarget::Opencode) => {
+            if !global {
+                anyhow::bail!(
+                    "OpenCode plugin is global-only. Use: rtk uninstall -g --agent opencode"
+                );
+            }
+            uninstall_opencode(ctx)
+        }
+        Some(agent) => {
+            let agent_name = agent
+                .to_possible_value()
+                .map(|value| value.get_name().to_owned())
+                .unwrap_or_else(|| "<agent>".to_owned());
+            anyhow::bail!(
+                "Top-level uninstall only supports OpenCode. Use: rtk init -g --uninstall --agent {agent_name}"
+            );
+        }
+        None => anyhow::bail!(
+            "Top-level uninstall requires --agent opencode. Use: rtk uninstall -g --agent opencode"
+        ),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TopLevelUninstallOptions {
+    global: bool,
+    agent: Option<AgentTarget>,
+    dry_run: bool,
+}
+
+fn uninstall_top_level_command_dispatch<UninstallOpencode>(
+    options: TopLevelUninstallOptions,
+    verbose: u8,
+    uninstall_opencode: UninstallOpencode,
+) -> Result<()>
+where
+    UninstallOpencode: FnOnce(hooks::init::InitContext) -> Result<()>,
+{
+    uninstall_top_level_dispatch(
+        options.agent,
+        options.global,
+        hooks::init::InitContext {
+            verbose,
+            dry_run: options.dry_run,
+        },
+        uninstall_opencode,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct UninstallInitOptions {
     agent: Option<AgentTarget>,
     global: bool,
     gemini: bool,
     codex: bool,
     ctx: hooks::init::InitContext,
+}
+
+fn uninstall_init_dispatch<UninstallHermes, UninstallDroid, UninstallStandard>(
+    options: UninstallInitOptions,
     uninstall_hermes: UninstallHermes,
+    uninstall_droid: UninstallDroid,
     uninstall_standard: UninstallStandard,
 ) -> Result<()>
 where
     UninstallHermes: FnOnce(hooks::init::InitContext) -> Result<()>,
+    UninstallDroid: FnOnce(bool, hooks::init::InitContext) -> Result<()>,
     UninstallStandard: FnOnce(bool, bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
 {
-    if agent == Some(AgentTarget::Hermes) {
-        uninstall_hermes(ctx)
+    if options.agent == Some(AgentTarget::Hermes) {
+        uninstall_hermes(options.ctx)
+    } else if options.agent == Some(AgentTarget::Droid) {
+        uninstall_droid(options.global, options.ctx)
     } else {
-        let cursor = agent == Some(AgentTarget::Cursor);
-        let pi = agent == Some(AgentTarget::Pi);
-        uninstall_standard(global, gemini, codex, cursor, pi, ctx)
+        let cursor = options.agent == Some(AgentTarget::Cursor);
+        let pi = options.agent == Some(AgentTarget::Pi);
+        uninstall_standard(
+            options.global,
+            options.gemini,
+            options.codex,
+            cursor,
+            pi,
+            options.ctx,
+        )
     }
 }
 
@@ -1890,10 +2050,7 @@ fn run_cli() -> Result<i32> {
             0
         }
 
-        Commands::Find { args } => {
-            find_cmd::run_from_args(&args, cli.verbose)?;
-            0
-        }
+        Commands::Find { args } => find_cmd::run_from_args(&args, cli.verbose)?,
 
         Commands::Which { name } => which_cmd::run(&name)?,
 
@@ -2044,15 +2201,22 @@ fn run_cli() -> Result<i32> {
                     hooks::init::uninstall_copilot(ctx)?;
                 }
             } else if uninstall {
-                uninstall_init_dispatch(
-                    agent,
-                    global,
-                    gemini,
-                    codex,
-                    ctx,
-                    hooks::init::uninstall_hermes,
-                    hooks::init::uninstall,
-                )?;
+                if agent == Some(AgentTarget::Opencode) {
+                    uninstall_opencode_dispatch(global, ctx, hooks::init::uninstall_opencode)?;
+                } else {
+                    uninstall_init_dispatch(
+                        UninstallInitOptions {
+                            agent,
+                            global,
+                            gemini,
+                            codex,
+                            ctx,
+                        },
+                        hooks::init::uninstall_hermes,
+                        hooks::init::uninstall_droid,
+                        hooks::init::uninstall,
+                    )?;
+                }
             } else if gemini {
                 let patch_mode = if auto_patch {
                     hooks::init::PatchMode::Auto
@@ -2084,6 +2248,15 @@ fn run_cli() -> Result<i32> {
                 hooks::init::run_antigravity_mode(ctx)?;
             } else if agent == Some(AgentTarget::Hermes) {
                 hooks::init::run_hermes_mode(ctx)?;
+            } else if agent == Some(AgentTarget::Droid) {
+                hooks::init::run_droid_mode(global, ctx)?;
+            } else if agent == Some(AgentTarget::Opencode) {
+                if !global {
+                    anyhow::bail!(
+                        "OpenCode plugin is global-only. Use: rtk init -g --agent opencode"
+                    );
+                }
+                hooks::init::run_opencode_mode(ctx)?;
             } else {
                 let install_opencode = opencode;
                 let install_claude = !opencode;
@@ -2112,6 +2285,23 @@ fn run_cli() -> Result<i32> {
                     ctx,
                 )?;
             }
+            0
+        }
+
+        Commands::Uninstall {
+            global,
+            agent,
+            dry_run,
+        } => {
+            uninstall_top_level_command_dispatch(
+                TopLevelUninstallOptions {
+                    global,
+                    agent,
+                    dry_run,
+                },
+                cli.verbose,
+                hooks::init::uninstall_opencode,
+            )?;
             0
         }
 
@@ -2388,6 +2578,20 @@ fn run_cli() -> Result<i32> {
 
         Commands::Mypy { args } => mypy_cmd::run(&args, cli.verbose)?,
 
+        Commands::Php { args } => php_cmd::run(&args, cli.verbose)?,
+
+        Commands::Phpunit { args } => phpunit_cmd::run(&args, cli.verbose)?,
+
+        Commands::Phpstan { args } => phpstan_cmd::run(&args, cli.verbose)?,
+
+        Commands::Pest { args } => pest_cmd::run(&args, cli.verbose)?,
+
+        Commands::Paratest { args } => paratest_cmd::run(&args, cli.verbose)?,
+
+        Commands::Ecs { args } => ecs_cmd::run(&args, cli.verbose)?,
+
+        Commands::Pint { args } => pint_cmd::run(&args, cli.verbose)?,
+
         Commands::Rake { args } => rake_cmd::run(&args, cli.verbose)?,
 
         Commands::Rubocop { args } => rubocop_cmd::run(&args, cli.verbose)?,
@@ -2472,6 +2676,10 @@ fn run_cli() -> Result<i32> {
             }
             HookCommands::Copilot => {
                 hooks::hook_cmd::run_copilot()?;
+                0
+            }
+            HookCommands::Droid => {
+                hooks::hook_cmd::run_droid()?;
                 0
             }
             HookCommands::Check { agent: _, command } => {
@@ -2808,6 +3016,13 @@ fn is_operational_command(cmd: &Commands) -> bool {
             | Commands::Curl { .. }
             | Commands::Ruff { .. }
             | Commands::Pytest { .. }
+            | Commands::Php { .. }
+            | Commands::Phpunit { .. }
+            | Commands::Phpstan { .. }
+            | Commands::Pest { .. }
+            | Commands::Paratest { .. }
+            | Commands::Ecs { .. }
+            | Commands::Pint { .. }
             | Commands::Rake { .. }
             | Commands::Rubocop { .. }
             | Commands::Rspec { .. }
@@ -3030,17 +3245,20 @@ mod tests {
         };
 
         let result = uninstall_init_dispatch(
-            Some(AgentTarget::Hermes),
-            true,
-            false,
-            false,
-            ctx,
+            UninstallInitOptions {
+                agent: Some(AgentTarget::Hermes),
+                global: true,
+                gemini: false,
+                codex: false,
+                ctx,
+            },
             |ctx| {
                 hermes_called.set(true);
                 assert_eq!(ctx.verbose, 2);
                 assert!(ctx.dry_run);
                 Ok(())
             },
+            |_, _| Ok(()),
             |_, _, _, _, _, _| {
                 standard_called.set(true);
                 Ok(())
@@ -3050,6 +3268,270 @@ mod tests {
         assert!(result.is_ok());
         assert!(hermes_called.get());
         assert!(!standard_called.get());
+    }
+
+    #[test]
+    fn test_init_uninstall_droid_parses_and_routes_to_droid_cleanup() {
+        let cli = Cli::try_parse_from(["rtk", "init", "--uninstall", "--agent", "droid"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Init {
+                uninstall: true,
+                agent: Some(AgentTarget::Droid),
+                ..
+            }
+        ));
+
+        let droid_called = Cell::new(false);
+        let standard_called = Cell::new(false);
+        let result = uninstall_init_dispatch(
+            UninstallInitOptions {
+                agent: Some(AgentTarget::Droid),
+                global: true,
+                gemini: false,
+                codex: false,
+                ctx: hooks::init::InitContext::default(),
+            },
+            |_| Ok(()),
+            |global, _| {
+                droid_called.set(true);
+                assert!(global);
+                Ok(())
+            },
+            |_, _, _, _, _, _| {
+                standard_called.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(droid_called.get());
+        assert!(!standard_called.get());
+    }
+
+    #[test]
+    fn test_init_uninstall_dispatch_routes_standard_agent_to_standard_cleanup() {
+        let standard_called = Cell::new(false);
+        let result = uninstall_init_dispatch(
+            UninstallInitOptions {
+                agent: Some(AgentTarget::Pi),
+                global: true,
+                gemini: false,
+                codex: false,
+                ctx: hooks::init::InitContext::default(),
+            },
+            |_| Ok(()),
+            |_, _| Ok(()),
+            |global, gemini, codex, cursor, pi, _| {
+                standard_called.set(true);
+                assert!(global);
+                assert!(!gemini);
+                assert!(!codex);
+                assert!(!cursor);
+                assert!(pi);
+                Ok(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(standard_called.get());
+    }
+
+    #[test]
+    fn test_init_agent_opencode_parses_and_routes_to_opencode_cleanup() {
+        let cli = Cli::try_parse_from([
+            "rtk",
+            "init",
+            "--uninstall",
+            "--global",
+            "--agent",
+            "opencode",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Init {
+                uninstall: true,
+                global: true,
+                agent: Some(AgentTarget::Opencode),
+                ..
+            }
+        ));
+
+        let opencode_called = Cell::new(false);
+        let result = uninstall_opencode_dispatch(true, hooks::init::InitContext::default(), |_| {
+            opencode_called.set(true);
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert!(opencode_called.get());
+    }
+
+    #[test]
+    fn test_init_agent_opencode_is_listed_in_help() {
+        use clap::CommandFactory;
+
+        let command = Cli::command();
+        let init = command.find_subcommand("init").unwrap();
+        let agent = init
+            .get_arguments()
+            .find(|arg| arg.get_id() == "agent")
+            .unwrap();
+        assert!(agent
+            .get_possible_values()
+            .iter()
+            .any(|value| value.get_name() == "opencode"));
+    }
+
+    #[test]
+    fn test_top_level_uninstall_opencode_parses_and_routes() {
+        let cli = Cli::try_parse_from([
+            "rtk",
+            "uninstall",
+            "--global",
+            "--agent",
+            "opencode",
+            "--dry-run",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Uninstall {
+                global: true,
+                agent: Some(AgentTarget::Opencode),
+                dry_run: true,
+            }
+        ));
+
+        let Cli {
+            command:
+                Commands::Uninstall {
+                    global,
+                    agent,
+                    dry_run,
+                },
+            ..
+        } = cli
+        else {
+            unreachable!("asserted above");
+        };
+
+        let opencode_called = Cell::new(false);
+        let result = uninstall_top_level_command_dispatch(
+            TopLevelUninstallOptions {
+                global,
+                agent,
+                dry_run,
+            },
+            0,
+            |_| {
+                opencode_called.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_ok());
+        assert!(opencode_called.get());
+    }
+
+    #[test]
+    fn test_top_level_uninstall_opencode_requires_global() {
+        let cli = Cli::try_parse_from(["rtk", "uninstall", "--agent", "opencode"]).unwrap();
+        let Commands::Uninstall {
+            global,
+            agent,
+            dry_run,
+        } = cli.command
+        else {
+            unreachable!("must parse as top-level uninstall");
+        };
+        let result = uninstall_top_level_command_dispatch(
+            TopLevelUninstallOptions {
+                global,
+                agent,
+                dry_run,
+            },
+            0,
+            |_| Ok(()),
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "OpenCode plugin is global-only. Use: rtk uninstall -g --agent opencode"
+        );
+    }
+
+    #[test]
+    fn test_top_level_uninstall_rejects_other_agents_without_deleting() {
+        let cli =
+            Cli::try_parse_from(["rtk", "uninstall", "--global", "--agent", "cursor"]).unwrap();
+        let Commands::Uninstall {
+            global,
+            agent,
+            dry_run,
+        } = cli.command
+        else {
+            unreachable!("must parse as top-level uninstall");
+        };
+        let called = Cell::new(false);
+        let result = uninstall_top_level_command_dispatch(
+            TopLevelUninstallOptions {
+                global,
+                agent,
+                dry_run,
+            },
+            0,
+            |_| {
+                called.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Top-level uninstall only supports OpenCode. Use: rtk init -g --uninstall --agent cursor"
+        );
+        assert!(!called.get(), "must not invoke any deletion path");
+    }
+
+    #[test]
+    fn test_top_level_uninstall_requires_agent_without_deleting() {
+        let cli = Cli::try_parse_from(["rtk", "uninstall", "--global"]).unwrap();
+        let Commands::Uninstall {
+            global,
+            agent,
+            dry_run,
+        } = cli.command
+        else {
+            unreachable!("must parse as top-level uninstall");
+        };
+        let called = Cell::new(false);
+        let result = uninstall_top_level_command_dispatch(
+            TopLevelUninstallOptions {
+                global,
+                agent,
+                dry_run,
+            },
+            0,
+            |_| {
+                called.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Top-level uninstall requires --agent opencode. Use: rtk uninstall -g --agent opencode"
+        );
+        assert!(!called.get(), "must not invoke any deletion path");
+    }
+
+    #[test]
+    fn test_top_level_uninstall_help_lists_agent_and_global() {
+        use clap::CommandFactory;
+
+        let command = Cli::command();
+        let uninstall = command.find_subcommand("uninstall").unwrap();
+        assert!(uninstall.get_arguments().any(|arg| arg.get_id() == "agent"));
+        assert!(uninstall
+            .get_arguments()
+            .any(|arg| arg.get_id() == "global"));
     }
 
     #[test]
@@ -3148,6 +3630,37 @@ mod tests {
     }
 
     #[test]
+    fn test_pipe_help_lists_all_php_filters() {
+        use clap::CommandFactory;
+
+        let command = Cli::command();
+        let pipe = command
+            .find_subcommand("pipe")
+            .expect("pipe subcommand must exist");
+        let help = pipe
+            .get_about()
+            .expect("pipe subcommand must have help text")
+            .to_string();
+        let filter_help = pipe
+            .get_arguments()
+            .find(|argument| argument.get_id().as_str() == "filter")
+            .expect("pipe filter argument must exist")
+            .get_help()
+            .expect("pipe filter argument must have help text")
+            .to_string();
+
+        for filter in [
+            "phpunit", "pest", "paratest", "php-test", "ecs", "phpstan", "pint",
+        ] {
+            assert!(help.contains(filter), "pipe help missing {filter}: {help}");
+            assert!(
+                filter_help.contains(filter),
+                "pipe filter help missing {filter}: {filter_help}"
+            );
+        }
+    }
+
+    #[test]
     fn test_meta_commands_reject_bad_flags() {
         // RTK meta-commands should produce parse errors (not fall through to raw execution).
         // Skip "proxy" because it uses trailing_var_arg (accepts any args by design).
@@ -3237,6 +3750,13 @@ mod tests {
             "golangci-lint",
             "gradlew",
             "mvn",
+            "php",
+            "phpunit",
+            "phpstan",
+            "pest",
+            "paratest",
+            "ecs",
+            "pint",
             "uv",
         ];
 
@@ -3289,6 +3809,32 @@ mod tests {
                 command: HookCommands::Claude
             }
         ));
+    }
+
+    #[test]
+    fn test_hook_droid_parses_and_is_listed_in_help() {
+        use clap::CommandFactory;
+
+        let cli = Cli::try_parse_from(["rtk", "hook", "droid"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Hook {
+                command: HookCommands::Droid
+            }
+        ));
+
+        let command = Cli::command();
+        let hook = command
+            .find_subcommand("hook")
+            .expect("hook command must be registered");
+        let droid = hook
+            .find_subcommand("droid")
+            .expect("droid hook command must be registered");
+        assert!(droid
+            .get_about()
+            .expect("droid hook command must have help text")
+            .to_string()
+            .contains("Factory Droid PreToolUse"));
     }
 
     #[test]
@@ -3365,6 +3911,120 @@ mod tests {
                 result.is_ok(),
                 "Meta-command {:?} should parse successfully",
                 args
+            );
+        }
+    }
+
+    #[test]
+    fn test_php_commands_registered_with_exact_variants_and_args() {
+        let cases: &[(&str, &[&str], &[&str])] = &[
+            // `--` ends RTK parsing; the hyphenated value after it belongs to PHP.
+            (
+                "php",
+                &["artisan", "about", "--", "--no-ansi"],
+                &["artisan", "about", "--", "--no-ansi"],
+            ),
+            (
+                "phpunit",
+                &["tests/Feature", "--filter=UserTest"],
+                &["tests/Feature", "--filter=UserTest"],
+            ),
+            (
+                "phpstan",
+                &["analyse", "--error-format=json", "src"],
+                &["analyse", "--error-format=json", "src"],
+            ),
+            (
+                "pest",
+                &["--group=api", "tests/Feature"],
+                &["--group=api", "tests/Feature"],
+            ),
+            (
+                "paratest",
+                &["--processes=4", "tests", "--filter=UserTest"],
+                &["--processes=4", "tests", "--filter=UserTest"],
+            ),
+            (
+                "ecs",
+                &["check", "src", "--no-progress-bar"],
+                &["check", "src", "--no-progress-bar"],
+            ),
+            (
+                "pint",
+                &["--test", "app", "--preset=laravel"],
+                &["--test", "app", "--preset=laravel"],
+            ),
+        ];
+
+        for &(command, input, expected_args) in cases {
+            let cli = Cli::try_parse_from(
+                std::iter::once("rtk")
+                    .chain(std::iter::once(command))
+                    .chain(input.iter().copied()),
+            )
+            .unwrap_or_else(|error| panic!("{command} must accept PHP command arguments: {error}"));
+
+            let actual_args = match (command, cli.command) {
+                ("php", Commands::Php { args })
+                | ("phpunit", Commands::Phpunit { args })
+                | ("phpstan", Commands::Phpstan { args })
+                | ("pest", Commands::Pest { args })
+                | ("paratest", Commands::Paratest { args })
+                | ("ecs", Commands::Ecs { args })
+                | ("pint", Commands::Pint { args }) => args,
+                (expected, actual) => panic!("Expected Commands::{expected}, got {actual:?}"),
+            };
+
+            let expected_args: Vec<_> = expected_args
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect();
+            assert_eq!(
+                actual_args, expected_args,
+                "{command} must preserve its arguments"
+            );
+        }
+    }
+
+    #[test]
+    fn test_php_command_help_describes_each_subcommand() {
+        let cases = [
+            (
+                "php",
+                "PHP command runner with compact output for artisan and syntax checks",
+            ),
+            ("phpunit", "PHPUnit test runner with compact output"),
+            ("phpstan", "PHPStan analyzer with compact output"),
+            ("pest", "Pest test runner with compact output"),
+            (
+                "paratest",
+                "ParaTest parallel test runner with compact output",
+            ),
+            (
+                "ecs",
+                "Easy Coding Standard code style checker with compact output",
+            ),
+            (
+                "pint",
+                "Laravel Pint (PHP-CS-Fixer) code style fixer with compact output",
+            ),
+        ];
+
+        for (command, about) in cases {
+            let error = match Cli::try_parse_from(["rtk", command, "--help"]) {
+                Err(error) => error,
+                Ok(_) => panic!("subcommand help must return a clap error"),
+            };
+            assert_eq!(
+                error.kind(),
+                ErrorKind::DisplayHelp,
+                "{command} must show help"
+            );
+
+            let help = error.render().to_string();
+            assert!(
+                help.contains(about),
+                "{command} help missing its description: {help}"
             );
         }
     }
@@ -3699,6 +4359,15 @@ mod tests {
                 assert_eq!(agent, Some(AgentTarget::Pi));
                 assert!(global);
             }
+            _ => panic!("Expected Init command"),
+        }
+    }
+
+    #[test]
+    fn test_init_agent_droid_parses() {
+        let cli = Cli::try_parse_from(["rtk", "init", "--agent", "droid"]).unwrap();
+        match cli.command {
+            Commands::Init { agent, .. } => assert_eq!(agent, Some(AgentTarget::Droid)),
             _ => panic!("Expected Init command"),
         }
     }

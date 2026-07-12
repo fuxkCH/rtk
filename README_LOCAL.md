@@ -18,7 +18,7 @@ stable directory, and add that directory to `PATH`:
 ```powershell
 $InstallDir = "$env:LOCALAPPDATA\Programs\rtk"
 New-Item -ItemType Directory -Force -Path $InstallDir
-Invoke-WebRequest -Uri "https://github.com/fuxkCH/rtk/releases/download/v0.43.1/rtk.exe" -OutFile "$InstallDir\rtk.exe"
+Invoke-WebRequest -Uri "https://github.com/fuxkCH/rtk/releases/download/v0.43.3/rtk.exe" -OutFile "$InstallDir\rtk.exe"
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($UserPath -split ';') -notcontains $InstallDir) {
     [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
@@ -41,7 +41,7 @@ Expected version for this release:
 当前 release 的预期版本：
 
 ```text
-rtk 0.43.1
+rtk 0.43.3
 ```
 
 Initialize Codex integration after verifying the binary:
@@ -92,10 +92,9 @@ Latest local result / 最新本地结果：
 | Check | Result |
 |---|---|
 | Debug build / Debug 编译 | PASS |
-| Windows native acceptance / Windows native 验收 | 83 passed, 0 skipped, 0 failed |
+| Windows native acceptance / Windows native 验收 | 87 passed, 0 skipped, 0 failed |
 | Format check / 格式检查 | PASS |
-| Rust tests / Rust 测试 | 2437 passed, 0 failed, 8 ignored |
-| Integration tests / 集成测试 | 11 passed, 0 failed |
+| Rust tests / Rust 测试 | 2475 unit tests run: 2467 passed, 0 failed, 8 ignored; 11 existing integration tests and 7 native error-feedback integration tests passed |
 
 Non-Windows runtime CI is intentionally out of scope for this local Windows verification pass. Non-Windows behavior should be reviewed by comparing the platform-neutral diffs against the main repository and by running CI in the appropriate environment before release.
 
